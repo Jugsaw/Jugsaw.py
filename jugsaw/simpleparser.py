@@ -22,21 +22,50 @@ class JugsawObject(object):
     __repr__ = __str__
 
 
+class JugsawList(object):
+    def __init__(self, storage:list):
+        self.storage = storage
+
+    def __str__(self):
+        return str(self.storage)
+
+    def __eq__(self, target):
+        # NOTE: we do not need to check fields as long as their types are the same
+        return isinstance(target, JugsawList) and all([x==y for x, y in zip(target.storage, self.storage)])
+
+    __repr__ = __str__
+
+class JugsawCall(object):
+    def __init__(self, fname:str, args:JugsawObject, kwargs:JugsawObject):
+        self.fname = fname
+        self.args = args
+        self.kwargs = kwargs
+
+    def __str__(self):
+        args = ", ".join([f"{repr(val)}" for val in self.args.fields])
+        kwargs = ", ".join([f"{repr(val)}" for val in self.kwargs.fields])
+        return f"{self.fname}({args}; {kwargs})"
+
+    def __eq__(self, target):
+        # NOTE: we do not need to check fields as long as their types are the same
+        return isinstance(target, JugsawCall) and target.fname == self.fname and all([x==y for x, y in zip(target.args, self.args)]) and all([x==y for x, y in zip(target.kwargs, self.kwargs)])
+
+    __repr__ = __str__
+
+
 # Convert the grammar into a JugsawIR tree.
 class JugsawTransformer(lark.Transformer):
-    def object(self, items):
+    def expr(self, items):
         return items[0]
-    def genericobj1(self, items):
-        return JugsawObject("", items[0])
-    def genericobj2(self, items):
-        return JugsawObject(items[0], items[1])
-    def genericobj3(self, items):
-        return JugsawObject(items[1], items[0])
-    def var(self, items):
-        return str(items[0])
-    # primitive types
+    def untyped(self, items):
+        return JugsawObject("unspecified", items)
+    def object(self, items):
+        return JugsawObject(items[0], items[1:])
+    def call(self, items):
+        return JugsawCall(items[0], items[1], items[2])
     def list(self, items):
-        return [] if items[0] == None else list(items)
+        return JugsawList(items)
+    # primitive types
     def string(self, items):
         return json.loads(items[0])
     def number(self, items):
@@ -60,7 +89,7 @@ class TypeTable(object):
 
 # constants
 # parse an object
-jp = lark.Lark.open("jugsawir.lark", rel_to=__file__, start='object', parser='lalr', transformer=JugsawTransformer())
+jp = lark.Lark.open("jugsawir.lark", rel_to=__file__, start='expr', parser='lalr', transformer=JugsawTransformer())
 
 def ir2adt(ir:str):
     return jp.parse(ir)
@@ -87,20 +116,16 @@ class Demo(object):
         return f"{self.fcall} = {repr(self.result)}"
 
 def load_app(s:str):
-    obj, typesadt = ir2adt(s)
+    obj, typesadt = ir2adt(s).storage
     tt = load_typetable(typesadt)
     ############ load app
     name, method_names, _method_demos = obj.fields
     method_demos = makedict(_method_demos)
     demos = OrderedDict()
-    for fname in aslist(method_names):
-        demos[fname] = []
-        for demo in aslist(method_demos[fname]):
-            (_fcall, result, meta) = demo.fields
-            _fname, args, kwargs = _fcall.fields
-            jf = Call(fname, args.fields, OrderedDict(zip(aslist(tt.defs[kwargs.typename].fieldnames), kwargs.fields)))
-            demo = Demo(jf, result, makedict(meta))
-            demos[fname].append(demo)
+    for fname in method_names.fields[1].storage:
+        (fcall, result, meta) = method_demos[fname].fields
+        jf = Call(fname, fcall.args.fields, OrderedDict(zip(aslist(tt.defs[fcall.kwargs.typename].fieldnames), fcall.kwargs.fields)))
+        demos[fname] = Demo(jf, result, makedict(meta))
     return (name, demos, tt)
 
 # showing demo python inputs
@@ -115,7 +140,7 @@ def adt2py(adt):
         raise Exception(f"{type(adt)} can not be parsed to python object!")
 
 def aslist(obj):
-    return obj.fields[1]
+    return obj.storage
 
 def makedict(adt):
     pairs = aslist(adt.fields[0])
@@ -135,28 +160,42 @@ def load_typetable(ast:JugsawObject):
 def isdirectrepresentable(obj):
     return (obj is None) or any([isinstance(obj, tp) for tp in (int, str, float, bool)])
 
-def py2adt(obj):
-    if isdirectrepresentable(obj):
+def py2adt(obj, demo):
+    if isinstance(obj, str) and isinstance(demo, JugsawObject) and demo.typename == "JugsawIR.JEnum":
+        return JugsawObject("JugsawIR.JEnum", [demo.fields[0], obj, demo.fields[2]])
+    elif isdirectrepresentable(obj):
         return obj
     elif isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
         return float(obj)
     elif isinstance(obj, dict) or isinstance(obj, OrderedDict):
-        return JugsawObject("JugsawIR.JDict", [JugsawObject("JugsawIR.JArray", [[len(obj)], [py2adt(item) for item in obj.items()]])])
+        eldemo = make_element_demo(aslist(demo.fields[0]))
+        return JugsawObject("JugsawIR.JDict", [JugsawList([py2adt(item, eldemo) for item in obj.items()])])
     elif isinstance(obj, list):
-        return JugsawObject("JusawIR.JArray", [[len(obj)], [py2adt(x) for x in obj]])
+        if isinstance(demo, JugsawList):
+            eldemo = make_element_demo(demo.storage)
+        else:
+            eldemo = make_element_demo(aslist(demo.fields[1]))
+        return JugsawObject("JusawIR.JArray", [JugsawList([len(obj)]), JugsawList([py2adt(x, eldemo) for x in obj])])
     elif isinstance(obj, np.ndarray):
         vec = np.reshape(obj, -1, order="F")
-        return JugsawObject("JugsawIR.JArray", [list(obj.shape), [py2adt(x) for x in vec]])
+        eldemo = make_element_demo(aslist(demo.fields[1]))
+        return JugsawObject("JugsawIR.JArray", [JugsawList(list(obj.shape)), JugsawList([py2adt(x, eldemo) for x in vec])])
     elif isinstance(obj, tuple):
-        return JugsawObject("Core.Tuple", [py2adt(x) for x in obj])
+        return JugsawObject("Core.Tuple", [py2adt(x, demox) for x, demox in zip(obj, demo.fields)])
     elif isinstance(obj, enum.Enum):
-        return JugsawObject("JugsawIR.JEnum", [type(obj).__name__, obj.name, [str(x.name) for x in type(obj)]])
+        return JugsawObject("JugsawIR.JEnum", [type(obj).__name__, obj.name, JugsawList([str(x.name) for x in type(obj)])])
     elif isinstance(obj, complex):
         return JugsawObject("Base.Complex", [obj.real, obj.imag])
     else:
-        return JugsawObject(str(type(obj)), [getattr(obj, x) for x in obj.__dict__.keys()])
+        return JugsawObject(demo.typename, [getattr(obj, x) for x in obj.__dict__.keys()])
+
+def make_element_demo(x:list):
+    if len(x) > 0:
+        return x[0]
+    else:
+        return None
 
 ###################### ADT to IR
 def adt2ir(x):
@@ -164,19 +203,23 @@ def adt2ir(x):
 
 def _adt2ir(x):
     if isinstance(x, JugsawObject):
-        return make_object_dict(x.typename, [_adt2ir(v) for v in x.fields])
-    elif isinstance(x, list):
-        return [_adt2ir(v) for v in x]
+        return make_object(x.typename, [_adt2ir(v) for v in x.fields])
+    elif isinstance(x, JugsawCall):
+        return make_call(x.fname, _adt2ir(x.args), _adt2ir(x.kwargs))
+    elif isinstance(x, JugsawList):
+        return ['list', *[_adt2ir(v) for v in x.storage]]
     elif isdirectrepresentable(x):
         return x
     else:
         raise Exception(f"type can not be casted to IR, got: {x} of type {type(x)}")
 
-def py2ir(py):
-    return adt2ir(py2adt(py))
-
-def make_object_dict(T:str, fields:list):
-    return {"type" : T, "fields" : fields}
+def make_object(T:str, fields:list):
+    if T == 'unspecified':
+        return ["untyped", *fields]
+    else:
+        return ["object", T, *fields]
+def make_call(fname:str, args:JugsawObject, kwargs:JugsawObject):
+    return ["call", fname, args, kwargs]
 
 if __name__ == "__main__":
     import pdb
