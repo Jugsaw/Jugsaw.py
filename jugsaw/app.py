@@ -19,7 +19,6 @@ class App(object):
     * `context` is a `ClientContext` instance, which contains the context information for the client, including the endpoint.
     """
     def __init__(self, name: str, method_demos:OrderedDict, type_table, context:ClientContext) -> None:
-        # TODO: fix the following code
         self.name = name
         self.method_demos = method_demos
         self.type_table = type_table

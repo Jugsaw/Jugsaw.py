@@ -49,8 +49,10 @@ def request_app_data(context:ClientContext, appname:str):
 
 def call(context:ClientContext, demo:Demo, *args, **kwargs):
     args_adt = JugsawObject("unspecified", [py2adt(arg, demo_arg) for (arg, demo_arg) in zip(args, demo.fcall.args)])
-    # TODO: fix the kwargs.values!!!!!
-    kwargs_adt = JugsawObject("unspecified", [py2adt(arg, demo_arg) for (arg, demo_arg) in zip(kwargs.values(), demo.fcall.kwargs)])
+    kwargs_dict = demo.fcall.kwargs.copy()
+    for k, v in kwargs.items():
+        kwargs_dict[k] = py2adt(v, demo.fcall.kwargs[k])
+    kwargs_adt = JugsawObject("unspecified", list(kwargs_dict.values()))
     assert len(args_adt.fields) == len(demo.fcall.args)
     assert len(kwargs_adt.fields) == len(demo.fcall.kwargs)
     fcall = JugsawCall(demo.fcall.fname, args_adt, kwargs_adt)
