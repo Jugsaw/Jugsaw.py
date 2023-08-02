@@ -2,7 +2,7 @@ import os
 import copy, uuid, time, json
 import requests
 from typing import Any, Optional
-from .simpleparser import load_app, Demo, JugsawObject, adt2ir, ir2adt, py2adt
+from .simpleparser import load_app, Demo, JugsawObject, adt2ir, ir2adt, py2adt, JugsawCall
 from urllib.parse import urljoin
 import pdb
 
@@ -48,12 +48,14 @@ def request_app_data(context:ClientContext, appname:str):
     return (name, demos, tt, context)
 
 def call(context:ClientContext, demo:Demo, *args, **kwargs):
-    args_adt = JugsawObject(demo.meta["args_type"], [py2adt(arg) for arg in args])
-    kwargs_adt = JugsawObject(demo.meta["kwargs_type"], [py2adt(arg) for arg in kwargs.values()])
+    args_adt = JugsawObject("unspecified", [py2adt(arg, demo_arg) for (arg, demo_arg) in zip(args, demo.fcall.args)])
+    kwargs_dict = demo.fcall.kwargs.copy()
+    for k, v in kwargs.items():
+        kwargs_dict[k] = py2adt(v, demo.fcall.kwargs[k])
+    kwargs_adt = JugsawObject("unspecified", list(kwargs_dict.values()))
     assert len(args_adt.fields) == len(demo.fcall.args)
     assert len(kwargs_adt.fields) == len(demo.fcall.kwargs)
-    fcall = JugsawObject("JugsawIR.Call",
-            [demo.fcall.fname, args_adt, kwargs_adt])
+    fcall = JugsawCall(demo.fcall.fname, args_adt, kwargs_adt)
     job_id = str(uuid.uuid4())
     safe_request(lambda : new_request_job(context, job_id, fcall, maxtime=60.0, created_by="jugsaw"))
     return LazyReturn(context, job_id, demo.result)
@@ -78,10 +80,10 @@ def healthz(context:ClientContext):
     return json.read(requests.get(urljoin(context.endpoint, path)).body)
 
 
-def new_request_job(context:ClientContext, job_id:str, fcall:JugsawObject, maxtime=10.0, created_by="jugsaw"):
+def new_request_job(context:ClientContext, job_id:str, fcall:JugsawCall, maxtime=10.0, created_by="jugsaw"):
     # create a job
     jobspec = JugsawObject("Jugsaw.JobSpec", [job_id, round(time.time()), created_by,
-        maxtime, *fcall.fields])
+        maxtime, fcall.fname, fcall.args, fcall.kwargs])
     ir = adt2ir(jobspec)
     print(ir)
     # NOTE: UGLY!
@@ -91,7 +93,7 @@ def new_request_job(context:ClientContext, job_id:str, fcall:JugsawObject, maxti
             "ce-specversion":"1.0"
         }
     data = json.dumps(ir)
-    method, body = ("POST", urljoin(context.endpoint, f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func/{fcall.fields[0]}"))
+    method, body = ("POST", urljoin(context.endpoint, f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func/{fcall.fname}"))
     return requests.request(method, body, headers=header, data=data)
 
 def new_request_healthz(context:ClientContext):
@@ -113,9 +115,9 @@ def new_request_fetch(context:ClientContext, job_id:str):
     header, data = {"Content-Type": "application/json"}, json.dumps({'job_id':job_id})
     return requests.request(method, body, headers=header, data=data)
 
-def new_request_api(context:ClientContext, fcall:JugsawObject, lang:str):
-    ir = adt2ir(JugsawObject("Core.Tuple{Core.String, JugsawIR.Call}", [context.endpoint, fcall]))
+def new_request_api(context:ClientContext, fcall:JugsawCall, lang:str):
+    ir = adt2ir(JugsawObject("unspecified", [context.endpoint, fcall]))
     method, body = ("GET", urljoin(context.endpoint,
-        f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func/{fcall.fields[0]}/api/{lang}"
+        f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func/{fcall.fname}/api/{lang}"
         ), {"Content-Type": "application/json"}, ir)
     return requests.request(method, body)

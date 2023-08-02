@@ -19,7 +19,6 @@ class App(object):
     * `context` is a `ClientContext` instance, which contains the context information for the client, including the endpoint.
     """
     def __init__(self, name: str, method_demos:OrderedDict, type_table, context:ClientContext) -> None:
-        # TODO: fix the following code
         self.name = name
         self.method_demos = method_demos
         self.type_table = type_table
@@ -31,7 +30,7 @@ class App(object):
     def __getattr__(self, fname: str):
         context = copy.deepcopy(self["context"])
         context.appname = self["name"]
-        return DemoRefs(fname, self["method_demos"][fname], context)
+        return DemoRef(self["method_demos"][fname], context)
 
     # this is for autocompletion!
     def __dir__(self):
@@ -53,38 +52,6 @@ def request_app(context:ClientContext, appname:str):
     ```
     """
     return App(*request_app_data(context, appname))
-
-class DemoRefs(object):
-    def __init__(self, name: str, demos:list, context:ClientContext) -> None:
-        self.name = name
-        self.demos = demos
-        self.context = context
-        self.__doc__ = self.demos[0].meta["docstring"]
-
-    def __getitem__(self, i:int):
-        return DemoRef(self.demos[i], self.context)
-
-    def __call__(self, *args, **kwargs):
-        if len(self.demos) == 1:
-            return self[0].__call__(*args, **kwargs)
-        else:
-            raise ValueError(f"More than one input patterns (got: {len(self.demos)}) available, to avoid ambiguity, please use choose the correct input pattern by indexing, e.g. using `demos[0](...)` instead of `demos(...)`")
-
-    def __len__(self):
-        return len(self.demos)
-
-    def input(self):
-        if len(self.demos) == 1:
-            return self[0].input()
-        else:
-            raise ValueError("multiple demos found, please use choose a demo by indexing, e.g. `demos[0]`")
-
-    def result(self):
-        if len(self.demos) == 1:
-            return self[0].result()
-        else:
-            raise ValueError("multiple demos found, please use choose a demo by indexing, e.g. `demos[0]`")
-
 
 class DemoRef(object):
     def __init__(self, demo:Demo, context:ClientContext) -> None:
