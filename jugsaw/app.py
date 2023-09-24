@@ -3,7 +3,7 @@ import copy, uuid
 import requests
 from typing import Any, Optional
 from collections import OrderedDict
-from .simpleparser import load_app, Demo, JugsawObject, adt2py
+from .simpleparser import load_app, Demo
 from .remotecall import request_app_data, ClientContext, call
 
 class App(object):
@@ -65,8 +65,7 @@ class DemoRef(object):
     def input(self):
         args = self.demo.fcall.args
         kwargs = self.demo.fcall.kwargs
-        return tuple([adt2py(arg) for arg in args]), {k:adt2py(v) for k, v in kwargs.items()}
+        return args, kwargs
 
     def result(self):
-        result = self.demo.result
-        return adt2py(result)
+        return self.demo.result
