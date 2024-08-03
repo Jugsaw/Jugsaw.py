@@ -15,6 +15,7 @@ class ClientContext(object):
     * `project = "unspecified"` is the project or user name.
     * `appname = "unspecified"` is the applicatoin name.
     * `version = "latest"` is the application version number.
+    * `headers = {}` is the extra header included in the GET/POST requests.
 
     ### Examples
     Please check :func:`~jugsaw.request_app` for an example.
@@ -24,12 +25,14 @@ class ClientContext(object):
             localurl:bool = False,
             project:str = "unspecified",
             appname:str = "unspecified",
-            version:str = "latest"):
+            version:str = "latest",
+            headers:dict = {}):
         self.endpoint = endpoint
         self.localurl = localurl
         self.project = project
         self.appname = appname
         self.version = version
+        self.headers = headers
 
 class LazyReturn(object):
     def __init__(self, context, job_id):
@@ -70,7 +73,7 @@ def fetch(context:ClientContext, job_id:str):
 
 def healthz(context:ClientContext):
     path = f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/healthz"
-    return json.read(requests.get(urljoin(context.endpoint, path)).body)
+    return json.read(requests.get(urljoin(context.endpoint, path), headers=context.headers).body)
 
 
 def new_request_job(context:ClientContext, fcall:JugsawCall, job_id:str=str(uuid.uuid4()), maxtime=10.0, created_by="jugsaw"):
@@ -91,13 +94,14 @@ def jsoncall(context:ClientContext, payload, job_id:str=str(uuid.uuid4()), maxti
             "fcall" : payload
             }
     # create a cloud event
-    header = {"Content-Type" : "application/json",
+    headers = {"Content-Type" : "application/json",
             "ce-id":str(uuid.uuid4()), "ce-type":"any", "ce-source":"python",
-            "ce-specversion":"1.0"
+            "ce-specversion":"1.0",
+            **context.headers
         }
     data = json.dumps(jobspec)
     method, body = ("POST", urljoin(context.endpoint, f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func/{payload['fname']}"))
-    res = requests.request(method, body, headers=header, data=data).json()
+    res = requests.request(method, body, headers=headers, data=data).json()
     if 'job_id' in res:
         return LazyReturn(context, job_id)
     elif 'error' in res:
@@ -109,17 +113,17 @@ def new_request_healthz(context:ClientContext):
     method, body = ("GET", urljoin(context.endpoint, 
         f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/healthz"
     ))
-    return requests.request(method, body)
+    return requests.request(method, body, headers=context.headers)
 
 def new_request_demos(context:ClientContext):
     method, body = ("GET", urljoin(context.endpoint,
         f"v1/proj/{context.project}/app/{context.appname}/ver/{context.version}/func"
     ))
-    return requests.request(method, body)
+    return requests.request(method, body, headers=context.headers)
 
 def new_request_fetch(context:ClientContext, job_id:str):
     method, body = ("POST", urljoin(context.endpoint,
         f"v1/job/{job_id}/result"
         ))
-    header, data = {"Content-Type": "application/json"}, json.dumps({'job_id':job_id})
+    header, data = {"Content-Type": "application/json", **context.headers}, json.dumps({'job_id':job_id})
     return requests.request(method, body, headers=header, data=data)
